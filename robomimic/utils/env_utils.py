@@ -137,7 +137,7 @@ def create_env(
         render=render, 
         render_offscreen=render_offscreen, 
         use_image_obs=use_image_obs,
-        postprocess_visual_obs=True,
+        postprocess_visual_obs=False,
         **kwargs,
     )
     print("Created environment with name {}".format(env_name))

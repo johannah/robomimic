@@ -55,6 +55,7 @@ Example usage below:
         --video_path /tmp/dataset_task_inits.mp4
 """
 
+from IPython import embed
 import os
 import json
 import h5py
@@ -68,6 +69,8 @@ import robomimic.utils.env_utils as EnvUtils
 import robomimic.utils.file_utils as FileUtils
 from robomimic.envs.env_base import EnvBase, EnvType
 
+import robosuite
+from robosuite.controllers import load_controller_config
 
 # Define default cameras to use for each env type
 DEFAULT_CAMERAS = {
@@ -76,13 +79,19 @@ DEFAULT_CAMERAS = {
     EnvType.GYM_TYPE: ValueError("No camera names supported for gym type env!"),
 }
 
+SITE_MAPPER = {
+             'robot0_ee'  :'gripper0_ee'  ,
+             'robot0_ee_x':'gripper0_ee_x',
+             'robot0_ee_y':'gripper0_ee_y',
+             'robot0_ee_z':'gripper0_ee_z',
+           }
 
 def playback_trajectory_with_env(
     env, 
+    env_target,
     initial_state, 
     states, 
     actions=None, 
-    render=False, 
     video_writer=None, 
     video_skip=5, 
     camera_names=None,
@@ -98,7 +107,6 @@ def playback_trajectory_with_env(
         initial_state (dict): initial simulation state to load
         states (np.array): array of simulation states to load
         actions (np.array): if provided, play actions back open-loop instead of using @states
-        render (bool): if True, render on-screen
         video_writer (imageio writer): video writer
         video_skip (int): determines rate at which environment frames are written to video
         camera_names (list): determines which camera(s) are used for rendering. Pass more than
@@ -109,79 +117,68 @@ def playback_trajectory_with_env(
 
     write_video = (video_writer is not None)
     video_count = 0
-    assert not (render and write_video)
 
     # load the initial state
-    o = env.reset()
-    print(o.keys())
-    env.reset_to(initial_state)
+    print("RESET  ENV")
+    env.reset()
+    print("===================")
+    ## TODO update keys
+    model_str = initial_state['model']
+    for key, item in SITE_MAPPER.items():
+        model_str = model_str.replace(key, item)
+    initial_state['model'] = model_str
+    ## No "site" with name gripper0_ee_x exists.
+    print("RESET  ENV TO INITiAL STATE")
+    states = initial_state['states']
+    env.reset_to({'states':states})
+    env_target.reset()
 
-    traj_len = states.shape[0]
+    for name in env_target.env.sim.model.joint_names:
+        if 'world' not in name and 'robot' not in name and 'gripper' not in name:
+            qpos_val = env.env.sim.data.get_joint_qpos(name)
+            to_jt = env_target.env.sim.model.get_joint_qpos_addr(name)
+            env_target.env.sim.data.qpos[to_jt[0]:to_jt[1]] = qpos_val  
+    print("===================")
+
+    traj_len = actions.shape[0]
     action_playback = (actions is not None)
-    if action_playback:
-        assert states.shape[0] == actions.shape[0]
+    o = env.get_observation()
+    ot = env_target.get_observation()
+    #o = env.env._get_observations(force_update=True)
+    #ot = env_target.env._get_observations(force_update=True)
+    last_eef_pos = o['robot0_eef_pos']
+    last_target_eef_pos = ot['robot0_eef_pos']
+
 
     for i in range(traj_len):
-        if action_playback:
-            env.step(actions[i])
-            if i < traj_len - 1:
-                # check whether the actions deterministically lead to the same recorded states
-                state_playback = env.get_state()["states"]
-                if not np.all(np.equal(states[i + 1], state_playback)):
-                    err = np.linalg.norm(states[i + 1] - state_playback)
-                    print("warning: playback diverged by {} at step {}".format(err, i))
-        else:
-            env.reset_to({"states" : states[i]})
-
-        # on-screen render
-        if render:
-            env.render(mode="human", camera_name=camera_names[0])
-
+        o,r,d,_ = env.env.step(actions[i])
+        #o = env.env._get_observations(force_update=True)
+        eef_pos = o['robot0_eef_pos']
+        #eef_quat = o['robot0_eef_quat']
+        target_action_pos = eef_pos - last_target_eef_pos 
+        target_action_ori = np.zeros(3) 
+        target_action_grip = actions[i,6:] # get actions
+        target_action = np.hstack((target_action_pos, target_action_ori, target_action_grip))    
+        ot,rt,dt,_ = env_target.env.step(target_action)
+        #ot = env.env._get_observations(force_update=True)
+        target_eef_pos = ot['robot0_eef_pos']
+        #target_eef_quat = ot['robot0_eef_quat']
+        if i < traj_len - 1:
+            # check whether the actions deterministically lead to the same recorded states
+            state_playback = env.get_state()["states"]
         # video render
         if write_video:
             if video_count % video_skip == 0:
                 video_img = []
                 for cam_name in camera_names:
+                    video_img.append(env_target.render(mode="rgb_array", height=512, width=512, camera_name=cam_name))
                     video_img.append(env.render(mode="rgb_array", height=512, width=512, camera_name=cam_name))
                 video_img = np.concatenate(video_img, axis=1) # concatenate horizontally
                 video_writer.append_data(video_img)
             video_count += 1
 
-        if first:
-            break
-
-
-def playback_trajectory_with_obs(
-    traj_grp,
-    video_writer, 
-    video_skip=5, 
-    image_names=None,
-    first=False,
-):
-    """
-    This function reads all "rgb" observations in the dataset trajectory and
-    writes them into a video.
-
-    Args:
-        traj_grp (hdf5 file group): hdf5 group which corresponds to the dataset trajectory to playback
-        video_writer (imageio writer): video writer
-        video_skip (int): determines rate at which environment frames are written to video
-        image_names (list): determines which image observations are used for rendering. Pass more than
-            one to output a video with multiple image observations concatenated horizontally.
-        first (bool): if True, only use the first frame of each episode.
-    """
-    assert image_names is not None, "error: must specify at least one image observation to use in @image_names"
-    video_count = 0
-
-    traj_len = traj_grp["actions"].shape[0]
-    for i in range(traj_len):
-        if video_count % video_skip == 0:
-            # concatenate image obs together
-            im = [traj_grp["obs/{}".format(k)][i] for k in image_names]
-            frame = np.concatenate(im, axis=1)
-            video_writer.append_data(frame)
-        video_count += 1
-
+        last_eef_pos = eef_pos
+        last_target_eef_pos = target_eef_pos
         if first:
             break
 
@@ -224,7 +221,6 @@ def playback_trajectory_with_obs(
 def playback_dataset(args):
     # some arg checking
     write_video = (args.video_path is not None)
-    assert not (args.render and write_video) # either on-screen or video but not both
 
     # Auto-fill camera rendering info if not specified
     if args.render_image_names is None:
@@ -233,31 +229,49 @@ def playback_dataset(args):
         env_type = EnvUtils.get_env_type(env_meta=env_meta)
         args.render_image_names = DEFAULT_CAMERAS[env_type]
 
-    if args.render:
-        # on-screen rendering can only support one camera
-        assert len(args.render_image_names) == 1
+    ## need to make sure ObsUtils knows which observations are images, but it doesn't matter 
+    ## for playback since observations are unused. Pass a dummy spec here.
+    dummy_spec = dict(
+        obs=dict(
+                low_dim=["robot0_eef_pos",  'robot0_eef_quat', 'robot0_joint_pos', 'robot0_joint_vel',  'robot0_gripper_qpos', 'robot0_gripper_qvel', 'robot0_proprio-state', 'object-state'],
+                rgb=['frontview_image'],
+            ),
+    )
+    ObsUtils.initialize_obs_utils_with_obs_specs(obs_modality_specs=dummy_spec)
 
-    if args.use_obs:
-        assert write_video, "playback with observations can only write to video"
-        assert not args.use_actions, "playback with observations is offline and does not support action playback"
+    env_meta = FileUtils.get_env_metadata_from_dataset(dataset_path=args.dataset)
+    env_meta_target = FileUtils.get_env_metadata_from_dataset(dataset_path=args.dataset)
+     
+    # Choose controller
+    control_freq = 5
+    controller_file = "jaco_osc_pose_%shz.json"%control_freq
+    controller_fpath = os.path.join(
+               os.path.split(robosuite.__file__)[0], 'controllers', 'config',
+               controller_file)
+    assert os.path.exists(controller_fpath)
+    env_meta_target['env_kwargs']['robots'][0] = args.target_robot
+    env_meta_target['env_kwargs']['controller_configs'] = load_controller_config(custom_fpath=controller_fpath)
+    env_meta_target['env_kwargs']['control_freq'] = control_freq
+    env_meta_target['env_kwargs']['use_camera_obs'] = True
+    env_meta_target['env_kwargs']['use_object_obs'] = True
+    env_meta_target['env_kwargs']['reward_shaping'] = True
+    env_meta_target['env_kwargs']['has_offscreen_renderer'] = True
+    env_meta['env_kwargs']['use_camera_obs'] = True
+    env_meta['env_kwargs']['use_object_obs'] = True
+    env_meta['env_kwargs']['reward_shaping'] = True
+    env_meta['env_kwargs']['has_offscreen_renderer'] = True
+    print("CREATING ENV FROM METADATA")
+    #env = EnvUtils.create_env_from_metadata(env_meta=env_meta, render_offscreen=write_video)
+    #env = robosuite.make(env_name=env_meta['env_name'], **env_meta['env_kwargs'])
+    #env_target = robosuite.make(env_name=env_meta['env_name'], **env_meta['env_kwargs'])
+    env= EnvUtils.create_env_from_metadata(env_meta=env_meta, render_offscreen=write_video)
+    env_target = EnvUtils.create_env_from_metadata(env_meta=env_meta_target, render_offscreen=write_video)
+    print("===================")
 
-    # create environment only if not playing back with observations
-    if not args.use_obs:
-        # need to make sure ObsUtils knows which observations are images, but it doesn't matter 
-        # for playback since observations are unused. Pass a dummy spec here.
-        dummy_spec = dict(
-            obs=dict(
-                    low_dim=["robot0_eef_pos"],
-                    rgb=[],
-                ),
-        )
-        ObsUtils.initialize_obs_utils_with_obs_specs(obs_modality_specs=dummy_spec)
+    # some operations for playback are robosuite-specific, so determine if this environment is a robosuite env
+    is_robosuite_env = EnvUtils.is_robosuite_env(env_meta)
 
-        env_meta = FileUtils.get_env_metadata_from_dataset(dataset_path=args.dataset)
-        env = EnvUtils.create_env_from_metadata(env_meta=env_meta, render=args.render, render_offscreen=write_video)
 
-        # some operations for playback are robosuite-specific, so determine if this environment is a robosuite env
-        is_robosuite_env = EnvUtils.is_robosuite_env(env_meta)
 
     f = h5py.File(args.dataset, "r")
 
@@ -282,7 +296,6 @@ def playback_dataset(args):
     for ind in range(len(demos)):
         ep = demos[ind]
         print("Playing back episode: {}".format(ep))
-
         if args.use_obs:
             playback_trajectory_with_obs(
                 traj_grp=f["data/{}".format(ep)], 
@@ -293,22 +306,21 @@ def playback_dataset(args):
             )
             continue
 
+
         # prepare initial state to reload from
         states = f["data/{}/states".format(ep)][()]
         initial_state = dict(states=states[0])
-        if is_robosuite_env:
-            initial_state["model"] = f["data/{}".format(ep)].attrs["model_file"]
+        initial_state["model"] = f["data/{}".format(ep)].attrs["model_file"]
 
         # supply actions if using open-loop action playback
         actions = None
-        if args.use_actions:
-            actions = f["data/{}/actions".format(ep)][()]
+        actions = f["data/{}/actions".format(ep)][()]
 
         playback_trajectory_with_env(
             env=env, 
+            env_target=env_target,
             initial_state=initial_state, 
             states=states, actions=actions, 
-            render=args.render, 
             video_writer=video_writer, 
             video_skip=args.video_skip,
             camera_names=args.render_image_names,
@@ -328,20 +340,19 @@ if __name__ == "__main__":
         help="path to hdf5 dataset",
     )
     parser.add_argument(
+        "--target-robot",
+        type=str,
+        default='Jaco', 
+        choices = ['Panda', 'Jaco'],
+        help="new robot to use for data collection",
+    )
+
+    parser.add_argument(
         "--filter_key",
         type=str,
         default=None,
         help="(optional) filter key, to select a subset of trajectories in the file",
     )
-
-    # number of trajectories to playback. If omitted, playback all of them.
-    parser.add_argument(
-        "--n",
-        type=int,
-        default=None,
-        help="(optional) stop after n trajectories are played",
-    )
-
     # Use image observations instead of doing playback using the simulator env.
     parser.add_argument(
         "--use-obs",
@@ -356,12 +367,15 @@ if __name__ == "__main__":
         help="use open-loop action playback instead of loading sim states",
     )
 
-    # Whether to render playback to screen
+ 
+    # number of trajectories to playback. If omitted, playback all of them.
     parser.add_argument(
-        "--render",
-        action='store_true',
-        help="on-screen rendering",
+        "--n",
+        type=int,
+        default=None,
+        help="(optional) stop after n trajectories are played",
     )
+
 
     # Dump a video of the dataset playback to the specified path
     parser.add_argument(
@@ -375,7 +389,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--video_skip",
         type=int,
-        default=5,
+        default=2,
         help="render frames to video every n steps",
     )
 
@@ -384,7 +398,7 @@ if __name__ == "__main__":
         "--render_image_names",
         type=str,
         nargs='+',
-        default=None,
+        default=['frontview'],
         help="(optional) camera name(s) / image observation(s) to use for rendering on-screen or to video. Default is"
              "None, which corresponds to a predefined camera for each env type",
     )
