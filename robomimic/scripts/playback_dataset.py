@@ -14,19 +14,19 @@ Args:
 
     n (int): if provided, stop after n trajectories are processed
 
-    use-obs (bool): if flag is provided, visualize trajectories with dataset 
+    use-obs (bool): if flag is provided, visualize trajectories with dataset
         image observations instead of simulator
 
-    use-actions (bool): if flag is provided, use open-loop action playback 
+    use-actions (bool): if flag is provided, use open-loop action playback
         instead of loading sim states
 
     render (bool): if flag is provided, use on-screen rendering during playback
-    
+
     video_path (str): if provided, render trajectories to this video file path
 
     video_skip (int): render frames to a video every @video_skip steps
 
-    render_image_names (str or [str]): camera name(s) / image observation(s) to 
+    render_image_names (str or [str]): camera name(s) / image observation(s) to
         use for rendering on-screen or to video
 
     first (bool): if flag is provided, use first frame of each episode for playback
@@ -71,26 +71,33 @@ from robomimic.envs.env_base import EnvBase, EnvType
 
 # Define default cameras to use for each env type
 DEFAULT_CAMERAS = {
-    EnvType.ROBOSUITE_TYPE: ["agentview"],
+    EnvType.ROBOSUITE_TYPE: ["agentview_image"],
     EnvType.IG_MOMART_TYPE: ["rgb"],
     EnvType.GYM_TYPE: ValueError("No camera names supported for gym type env!"),
 }
 
+SITE_MAPPER = {
+             'robot0_ee'  :'gripper0_ee'  ,
+             'robot0_ee_x':'gripper0_ee_x',
+             'robot0_ee_y':'gripper0_ee_y',
+             'robot0_ee_z':'gripper0_ee_z',
+           }
+
 
 def playback_trajectory_with_env(
-    env, 
-    initial_state, 
-    states, 
-    actions=None, 
-    render=False, 
-    video_writer=None, 
-    video_skip=5, 
+    env,
+    initial_state,
+    states,
+    actions=None,
+    render=False,
+    video_writer=None,
+    video_skip=5,
     camera_names=None,
     first=False,
 ):
     """
     Helper function to playback a single trajectory using the simulator environment.
-    If @actions are not None, it will play them open-loop after loading the initial state. 
+    If @actions are not None, it will play them open-loop after loading the initial state.
     Otherwise, @states are loaded one by one.
 
     Args:
@@ -114,6 +121,9 @@ def playback_trajectory_with_env(
     # load the initial state
     o = env.reset()
     print(o.keys())
+    model_str = initial_state['model']
+    for key, item in SITE_MAPPER.items():
+        model_str = model_str.replace(key, item)
     env.reset_to(initial_state)
 
     traj_len = states.shape[0]
@@ -153,8 +163,8 @@ def playback_trajectory_with_env(
 
 def playback_trajectory_with_obs(
     traj_grp,
-    video_writer, 
-    video_skip=5, 
+    video_writer,
+    video_skip=5,
     image_names=None,
     first=False,
 ):
@@ -188,8 +198,8 @@ def playback_trajectory_with_obs(
 
 def playback_trajectory_with_obs(
     traj_grp,
-    video_writer, 
-    video_skip=5, 
+    video_writer,
+    video_skip=5,
     image_names=None,
     first=False,
 ):
@@ -243,7 +253,7 @@ def playback_dataset(args):
 
     # create environment only if not playing back with observations
     if not args.use_obs:
-        # need to make sure ObsUtils knows which observations are images, but it doesn't matter 
+        # need to make sure ObsUtils knows which observations are images, but it doesn't matter
         # for playback since observations are unused. Pass a dummy spec here.
         dummy_spec = dict(
             obs=dict(
@@ -285,8 +295,8 @@ def playback_dataset(args):
 
         if args.use_obs:
             playback_trajectory_with_obs(
-                traj_grp=f["data/{}".format(ep)], 
-                video_writer=video_writer, 
+                traj_grp=f["data/{}".format(ep)],
+                video_writer=video_writer,
                 video_skip=args.video_skip,
                 image_names=args.render_image_names,
                 first=args.first,
@@ -305,11 +315,11 @@ def playback_dataset(args):
             actions = f["data/{}/actions".format(ep)][()]
 
         playback_trajectory_with_env(
-            env=env, 
-            initial_state=initial_state, 
-            states=states, actions=actions, 
-            render=args.render, 
-            video_writer=video_writer, 
+            env=env,
+            initial_state=initial_state,
+            states=states, actions=actions,
+            render=args.render,
+            video_writer=video_writer,
             video_skip=args.video_skip,
             camera_names=args.render_image_names,
             first=args.first,
