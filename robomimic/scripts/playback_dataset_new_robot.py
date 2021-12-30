@@ -7,7 +7,11 @@ in the dataset (this is useful for real-robot datasets) by using the
 --use-obs argument.
 
 Args:
-    dataset (str): path to hdf5 dataset
+    dataset (str): path to load hdf5 dataset
+
+    dataset-path (str): path to save hdf5 dataset
+
+    target-robot (str) Name of robot to act in. Dataset created with Panda, target tested with Jaco
 
     filter_key (str): if provided, use the subset of trajectories
         in the file that correspond to this filter key
@@ -16,39 +20,23 @@ Args:
 
     render (bool): if flag is provided, use on-screen rendering during playback
 
-    video_path (str): if provided, render trajectories to this video file path
+    video-path (str): if provided, render trajectories to this video file path
 
-    video_skip (int): render frames to a video every @video_skip steps
+    video-skip (int): render frames to a video every @video_skip steps
 
-    render_camera_names (str or [str]): camera name(s) / image observation(s) to
+    render-camera-names (str or [str]): camera name(s) / image observation(s) to
         use for rendering on-screen or to video
 
-    first (bool): if flag is provided, use first frame of each episode for playback
-        instead of the entire episode. Useful for visualizing task initializations.
+
 
 Example usage below:
-
-    # force simulation states one by one, and render agentview and wrist view cameras to video
-    python playback_dataset.py --dataset /path/to/dataset.hdf5 \
-        --render_camera_names agentview robot0_eye_in_hand \
-        --video_path /tmp/playback_dataset.mp4
-
-    # playback the actions in the dataset, and render agentview camera during playback to video
-    python playback_dataset.py --dataset /path/to/dataset.hdf5 \
-        --use-actions --render_camera_names agentview \
-        --video_path /tmp/playback_dataset_with_actions.mp4
-
-    # use the observations stored in the dataset to render videos of the dataset trajectories
-    python playback_dataset.py --dataset /path/to/dataset.hdf5 \
-        --use-obs --render_camera_names agentview_image \
-        --video_path /tmp/obs_trajectory.mp4
-
-    # visualize initial states in the demonstration data
-    python playback_dataset.py --dataset /path/to/dataset.hdf5 \
-        --first --render_camera_names agentview \
-        --video_path /tmp/dataset_task_inits.mp4
+    playback panda robot as jaco using osc-pose control. Save all the state observations.
+    python playback_dataset_new_robot.py --target-robot Jaco
+    --dataset '../../datasets/lift/ph/demo.hdf5'
+    --dataset-path '../../datasets/lift/ph/demo_jaco.hdf5'  --dataset-obs
 """
 import numpy as np
+np.set_printoptions(suppress=True)
 np.random.seed(1111)
 import torch
 torch.manual_seed(1111)
@@ -73,6 +61,7 @@ from robomimic.envs.env_base import EnvBase, EnvType
 import robosuite
 from robosuite.controllers import load_controller_config
 from robosuite.utils import transform_utils
+from robosuite.models.robots.manipulators.jaco_robot import REAL_INIT_QPOS
 
 # Define default cameras to use for each env type
 DEFAULT_CAMERAS = {
@@ -136,7 +125,9 @@ def playback_trajectory_with_env(
     states = initial_state['states']
     env.reset_to({'states':states})
     env_target.reset()
-
+    #init_qpos = REAL_INIT_QPOS
+    #env_target.env.robots[0].set_robot_joint_positions(init_qpos)
+    #env.env.robots[0].controller.update_initial_joints(init_qpos)
     # set target env to be same for objects
     for name in env_target.env.sim.model.joint_names:
         if 'world' not in name and 'robot' not in name and 'gripper' not in name:
@@ -145,6 +136,8 @@ def playback_trajectory_with_env(
             env_target.env.sim.data.qpos[to_jt[0]:to_jt[1]] = qpos_val
     print("===================")
 
+    action_min = env_target.env.action_spec[0]
+    action_max = env_target.env.action_spec[1]
     traj_len = actions.shape[0]
     o = env.get_observation()
     #target_obs = env_target.env._get_observations()
@@ -156,12 +149,8 @@ def playback_trajectory_with_env(
     total_reward = 0.
     target_state_dict = deepcopy(env_target.get_state())
 
-
-    initial_target_state_dict = deepcopy(env_target.get_state())
-    initial_state_dict = deepcopy(env.get_state())
-
-    print(target_state_dict)
-    traj = dict(actions=[], rewards=[], dones=[], states=[], initial_state_dict=target_state_dict)
+    traj = dict(actions=[], rewards=[], dones=[],
+                states=[], initial_state_dict=target_state_dict)
     if return_obs:
         # store observations too
         traj.update(dict(obs=[], next_obs=[]))
@@ -177,6 +166,8 @@ def playback_trajectory_with_env(
         target_action_ori = transform_utils.quat2axisangle(transform_utils.quat_distance(next_eef_quat, target_eef_quat))
         target_action_grip = actions[i,6:] # get action/s
         target_action = np.hstack((target_action_pos, target_action_ori, target_action_grip))
+
+        target_action = np.clip(target_action, action_min, action_max)
         next_target_obs,target_reward,target_done,_ = env_target.step(target_action)
         next_target_eef_pos =  next_target_obs['robot0_eef_pos']
         next_target_eef_quat = next_target_obs['robot0_eef_quat']
@@ -226,7 +217,6 @@ def playback_trajectory_with_env(
 
     # list to numpy array
     for k in traj:
-        print("TRYING", k)
         if k == "initial_state_dict":
             continue
         if isinstance(traj[k], dict):
@@ -401,6 +391,7 @@ def playback_dataset(args):
 
     f.close()
     if write_video:
+        print('writing video to', args.video_path)
         video_writer.close()
 
     if write_dataset:
@@ -428,7 +419,7 @@ if __name__ == "__main__":
     )
 
     parser.add_argument(
-        "--filter_key",
+        "--filter-key",
         type=str,
         default=None,
         help="(optional) filter key, to select a subset of trajectories in the file",
@@ -449,7 +440,7 @@ if __name__ == "__main__":
 
     # If provided, an hdf5 file will be written with the rollout data
     parser.add_argument(
-        "--dataset_path",
+        "--dataset-path",
         type=str,
         default=None,
         help="(optional) if provided, an hdf5 file will be written at this path with the rollout data",
@@ -457,7 +448,7 @@ if __name__ == "__main__":
 
     # If True and @dataset_path is supplied, will write possibly high-dimensional observations to dataset.
     parser.add_argument(
-        "--dataset_obs",
+        "--dataset-obs",
         action='store_true',
         help="include possibly high-dimensional observations in output dataset hdf5 file (by default,\
             observations are excluded and only simulator states are saved)",
@@ -476,7 +467,7 @@ if __name__ == "__main__":
 
     # Dump a video of the dataset playback to the specified path
     parser.add_argument(
-        "--video_path",
+        "--video-path",
         type=str,
         default=None,
         help="(optional) render trajectories to this video file path",
@@ -484,7 +475,7 @@ if __name__ == "__main__":
 
     # How often to write video frames during the playback
     parser.add_argument(
-        "--video_skip",
+        "--video-skip",
         type=int,
         default=2,
         help="render frames to video every n steps",
@@ -492,7 +483,7 @@ if __name__ == "__main__":
 
     # camera names to render, or image observations to use for writing to video
     parser.add_argument(
-        "--render_camera_names",
+        "--render-camera-names",
         type=str,
         nargs='+',
         default=['frontview'],
