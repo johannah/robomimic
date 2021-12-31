@@ -4,7 +4,7 @@ The main script for evaluating a policy in an environment.
 Args:
     agent (str): path to saved checkpoint pth file
 
-    horizon (int): if provided, override maximum horizon of rollout from the one 
+    horizon (int): if provided, override maximum horizon of rollout from the one
         in the checkpoint
 
     env (str): if provided, override name of env from the one in the checkpoint,
@@ -21,7 +21,7 @@ Args:
     dataset_path (str): if provided, an hdf5 file will be written at this path with the
         rollout data
 
-    dataset_obs (bool): if flag is provided, and @dataset_path is provided, include 
+    dataset_obs (bool): if flag is provided, and @dataset_path is provided, include
         possible high-dimensional observations in output dataset hdf5 file (by default,
         observations are excluded and only simulator states are saved).
 
@@ -31,17 +31,17 @@ Example usage:
 
     # Evaluate a policy with 50 rollouts of maximum horizon 400 and save the rollouts to a video.
     # Visualize the agentview and wrist cameras during the rollout.
-    
+
     python run_trained_agent.py --agent /path/to/model.pth \
         --n_rollouts 50 --horizon 400 --seed 0 \
         --video_path /path/to/output.mp4 \
-        --camera_names agentview robot0_eye_in_hand 
+        --camera_names agentview robot0_eye_in_hand
 
     # Write the 50 agent rollouts to a new dataset hdf5.
 
     python run_trained_agent.py --agent /path/to/model.pth \
         --n_rollouts 50 --horizon 400 --seed 0 \
-        --dataset_path /path/to/output.hdf5 --dataset_obs 
+        --dataset_path /path/to/output.hdf5 --dataset_obs
 
     # Write the 50 agent rollouts to a new dataset hdf5, but exclude the dataset observations
     # since they might be high-dimensional (they can be extracted again using the
@@ -71,7 +71,7 @@ from robomimic.algo import RolloutPolicy
 
 def rollout(policy, env, horizon, render=False, video_writer=None, video_skip=5, return_obs=False, camera_names=None):
     """
-    Helper function to carry out rollouts. Supports on-screen rendering, off-screen rendering to a video, 
+    Helper function to carry out rollouts. Supports on-screen rendering, off-screen rendering to a video,
     and returns the rollout trajectory.
 
     Args:
@@ -81,9 +81,9 @@ def rollout(policy, env, horizon, render=False, video_writer=None, video_skip=5,
         render (bool): whether to render rollout on-screen
         video_writer (imageio writer): if provided, use to write rollout to video
         video_skip (int): how often to write video frames
-        return_obs (bool): if True, return possibly high-dimensional observations along the trajectoryu. 
-            They are excluded by default because the low-dimensional simulation states should be a minimal 
-            representation of the environment. 
+        return_obs (bool): if True, return possibly high-dimensional observations along the trajectoryu.
+            They are excluded by default because the low-dimensional simulation states should be a minimal
+            representation of the environment.
         camera_names (list): determines which camera(s) are used for rendering. Pass more than
             one to output a video with multiple camera views concatenated horizontally.
 
@@ -204,10 +204,10 @@ def run_trained_agent(args):
 
     # create environment from saved checkpoint
     env, _ = FileUtils.env_from_checkpoint(
-        ckpt_dict=ckpt_dict, 
-        env_name=args.env, 
-        render=args.render, 
-        render_offscreen=(args.video_path is not None), 
+        ckpt_dict=ckpt_dict,
+        env_name=args.env,
+        render=args.render,
+        render_offscreen=(args.video_path is not None),
         verbose=True,
     )
 
@@ -231,12 +231,12 @@ def run_trained_agent(args):
     rollout_stats = []
     for i in range(rollout_num_episodes):
         stats, traj = rollout(
-            policy=policy, 
-            env=env, 
-            horizon=rollout_horizon, 
-            render=args.render, 
-            video_writer=video_writer, 
-            video_skip=args.video_skip, 
+            policy=policy,
+            env=env,
+            horizon=rollout_horizon,
+            render=args.render,
+            video_writer=video_writer,
+            video_skip=args.video_skip,
             return_obs=(write_dataset and args.dataset_obs),
             camera_names=args.camera_names,
         )
